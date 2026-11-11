@@ -1,0 +1,49 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  namespace: default
+  labels:
+    app: todo-frontend
+  name: todo-frontend
+
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: todo-frontend
+  template:
+    metadata:
+      labels:
+        app: todo-frontend
+    spec:
+      containers:
+        - name: todo-frontend
+          image: marceleno17/todo-frontend
+          ports:
+            - containerPort: 80
+          env:
+            - name: BACKEND_URL
+              value: http://todo-backend:3000
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "64Mi"
+            limits:
+              cpu: "1000m"
+              memory: "128Mi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  namespace: default
+  labels:
+    app: todo-frontend
+  name: todo-frontend
+
+spec:
+  type: NodePort
+  selector:
+    app: todo-frontend
+  ports:
+    - port: 8080
+      targetPort: 80

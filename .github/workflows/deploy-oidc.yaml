@@ -1,0 +1,79 @@
+name: todo-frontend-pipeline
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+
+      - name: bun install
+        run: bun ci
+
+      - uses: docker/login-action@v4
+        with:
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_PASSWORD }}
+      - uses: docker/build-push-action@v7
+        with:
+          push: true
+          tags: |
+            marceleno17/todo-frontend:${{ github.sha }}
+            marceleno17/todo-frontend:latest
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: build
+
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Get runner public ip
+        id: ip
+        run: |
+          # PUBIP=$(curl wtfismyip.com)
+          PUBIP=$(curl checkip.amazonaws.com)
+          echo "ip=$PUBIP" >> $GITHUB_OUTPUT
+
+      - name: Configure AWS creds
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ID }}
+          aws-region: us-east-1
+
+      - name: Authorize Security Group Inbound Rule
+        run: |
+          aws ec2 authorize-security-group-ingress \
+            --group-id ${{ secrets.AWS_SG_ID }} \
+            --protocol tcp \
+            --port 6443 \
+            --cidr ${{ steps.ip.outputs.ip }}/32
+
+      - name: Update kubectl config
+        run: |
+          mkdir ~/.kube
+          echo "${{ secrets.KUBE_CONFIG_DATA }}" | base64 --decode > ~/.kube/config
+          chmod 600 ~/.kube/config
+
+      - name: Change deployment image
+        run: kubectl set image deployment todo-frontend todo-frontend=marceleno17/todo-frontend:${{ github.sha }}
+
+      - name: Wait for rollout
+        run: kubectl rollout status deployment/todo-frontend --timeout=120s
+
+      - name: Revoke Security Group Inbound Rule
+        if: always()
+        run: |
+          aws ec2 revoke-security-group-ingress \
+            --group-id ${{ secrets.AWS_SG_ID }} \
+            --protocol tcp \
+            --port 6443 \
+            --cidr ${{ steps.ip.outputs.ip }}/32
